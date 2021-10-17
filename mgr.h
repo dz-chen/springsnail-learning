@@ -8,9 +8,12 @@
 
 using std::map;
 
-/**
- * 代表一台主机 
- */ 
+/*
+ *      host类代表一台主机,仅有成员变量
+ * 成员m_hostname: 主机名
+ * 成员m_port:     端口号
+ * 成员m_conncnt:  支持的最大连接数
+ */
 class host
 {
 public:
@@ -18,6 +21,7 @@ public:
     int m_port;
     int m_conncnt;
 };
+
 
 class mgr
 {

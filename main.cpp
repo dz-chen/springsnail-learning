@@ -31,10 +31,13 @@ static void usage( const char* prog )
 }
 
 
-
+/*
+ * springnail程序的主函数
+ * processpool是重点
+ */ 
 int main( int argc, char* argv[] )
 {
-    char cfg_file[1024];
+    char cfg_file[1024];            // 配置文件名
     memset( cfg_file, '\0', 100 );
     int option;
 
@@ -103,8 +106,8 @@ int main( int argc, char* argv[] )
 
 
     // 3.解析配置文件
-    vector< host > balance_srv;     // 负载均衡服务器 => 即xml顶部配置的服务器,它是springnail作为代理服务器向客户端提供的接口
-    vector< host > logical_srv;     // 逻辑服务器     => 即xml中配置的远程服务器
+    vector< host > balance_srv;     // 负载均衡服务器(springnail本身) => 即xml顶部配置的服务器,它是springnail作为代理服务器向客户端提供的接口
+    vector< host > logical_srv;     // 逻辑服务器                    => 即xml中配置的远程服务器
     host tmp_host;
     memset( tmp_host.m_hostname, '\0', 1024 );
     char* tmp_hostname;
@@ -203,30 +206,24 @@ int main( int argc, char* argv[] )
     // 4.启动负载均衡服务器(socket、bind、listent.....)
     const char* ip = balance_srv[0].m_hostname;
     int port = balance_srv[0].m_port;
-    int listenfd = socket( PF_INET, SOCK_STREAM, 0 );   // 监听socket
+    int listenfd = socket( PF_INET, SOCK_STREAM, 0 );   // a.创建监听socket,SOCK_STREAM代表TCP
     assert( listenfd >= 0 );
  
     int ret = 0;
-    struct sockaddr_in address;
+    struct sockaddr_in address;                         // 服务端socket地址
     bzero( &address, sizeof( address ) );
     address.sin_family = AF_INET;
     inet_pton( AF_INET, ip, &address.sin_addr );
     address.sin_port = htons( port );
 
-    ret = bind( listenfd, ( struct sockaddr* )&address, sizeof( address ) );   // 将socket与地址绑定
+    ret = bind( listenfd, ( struct sockaddr* )&address, sizeof( address ) );   // b.将socket与地址绑定(即将socket地址与监听描述符绑定)
     assert( ret != -1 );
 
-    ret = listen( listenfd, 5 );    // 为监听socket创建监听队列,并进行监听
+    ret = listen( listenfd, 5 );    // c.为监听socket创建监听队列,并进行监听
     assert( ret != -1 );
 
-    //memset( cfg_host.m_hostname, '\0', 1024 );
-    //memcpy( cfg_host.m_hostname, "127.0.0.1", strlen( "127.0.0.1" ) );
-    //cfg_host.m_port = 54321;
-    //cfg_host.m_conncnt = 5;
 
-
-
-    // 4.5 创建进程池并投入运行......
+    // 5.创建进程池并投入运行......
     processpool< conn, host, mgr >* pool = processpool< conn, host, mgr >::create( listenfd, logical_srv.size() );
     if( pool )
     {

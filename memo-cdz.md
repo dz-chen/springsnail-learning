@@ -1,6 +1,6 @@
 @[toc]
 # 使用
-1.当前目录make编译项目  
+1.当前目录make编译项目   
 2.修改config.xml,顶部是springnail作为代理服务器提供给客户端的ip和端口;xml是代理服务器最终要访问的远程服务器  
 3.执行 ./springnail -f config.xml  
 4.执行nc ip:port  
@@ -15,4 +15,6 @@ fdwrapper.h、fdwrapper.cpp:文件描述符fd相关的函数
 mgr.h、mgr.cpp:处理网络连接和负载均衡的框架  
 processpool.h:进程池  
 config.xml:指明服务器本身的地址及要连接的IP  
+
+重点是:processpool、mgr; 其进程池的实现非常值得学习  
 

@@ -22,23 +22,41 @@
 
 using std::vector;
 
+
+/*
+ * process类代表进程
+ */
 class process
 {
 public:
     process() : m_pid( -1 ){}
 
 public:
-    int m_busy_ratio;
-    pid_t m_pid;
-    int m_pipefd[2];
+    int m_busy_ratio;       // 描述此进程的繁忙程度
+    pid_t m_pid;            // 进程id
+    int m_pipefd[2];        // 通过socketpair()创建的本地套接字(其实就是一个双向管道); 创建时父进程关闭写端,子进程关闭读端,然后用于父子进程通信
 };
 
+
+/*
+ * processpool是进程池的模板类
+ * 模板参数C: conn 
+ * 模板参数H: host
+ * 模板参数M: mgr
+ * 1.要理解进程池的原理,注意在子进程的虚拟地址空间中也是存在此进程池的实例的,由于COW写时才会复制;
+ * 2.子进程中通过进程池的m_idx来判断当前是哪个进程的;
+ */
 template< typename C, typename H, typename M >
 class processpool
 {
 private:
     processpool( int listenfd, int process_number = 8 );
 public:
+
+    /*
+     * static函数,创建进程池实例,返回指向此实例的指针
+     * 会调用processpool的构造函数
+     */
     static processpool< C, H, M >* create( int listenfd, int process_number = 8 )
     {
         if( !m_instance )
@@ -51,6 +69,7 @@ public:
     {
         delete [] m_sub_process;
     }
+
     void run( const vector<H>& arg );
 
 private:
@@ -64,27 +83,41 @@ private:
     static const int MAX_PROCESS_NUMBER = 16;
     static const int USER_PER_PROCESS = 65536;
     static const int MAX_EVENT_NUMBER = 10000;
-    int m_process_number;
-    int m_idx;
-    int m_epollfd;
-    int m_listenfd;
+    int m_process_number;                           // 进程数量
+    int m_idx;                                      // 当前进程的下标,注意在子进程中这个变量被修改为其对应的下标,后续的逻辑需要通过它判断是哪个进程
+    int m_epollfd;                                  // 存放epoll感兴趣事件的描述符
+    int m_listenfd;                                 // 监听描述符
     int m_stop;
-    process* m_sub_process;
-    static processpool< C, H, M >* m_instance;
+    process* m_sub_process;                         // 指向进程池中的子进程(数组)
+    static processpool< C, H, M >* m_instance;      // 静态变量,指向进程池实例的指针;默认为NULL
 };
+
+
+
 template< typename C, typename H, typename M >
 processpool< C, H, M >* processpool< C, H, M >::m_instance = NULL;
 
 static int EPOLL_WAIT_TIME = 5000;
-static int sig_pipefd[2];
+static int sig_pipefd[2];           // setup_sig_pipe()中被初始化
+
+
+/*
+ * 信号处理函数,它作为handler处理产生的信号
+ * 此项目中,它其实就是将信号信息写入管道
+ */
 static void sig_handler( int sig )
 {
-    int save_errno = errno;
+    int save_errno = errno;         // TODO:暂存errno的作用
     int msg = sig;
     send( sig_pipefd[1], ( char* )&msg, 1, 0 );
     errno = save_errno;
 }
 
+
+/*
+ * 注册信号处理函数;
+ * 注意:信号不同于中断,信号处理函数在用户态执行,而中断处理在内核态执行
+ */
 static void addsig( int sig, void( handler )(int), bool restart = true )
 {
     struct sigaction sa;
@@ -98,6 +131,11 @@ static void addsig( int sig, void( handler )(int), bool restart = true )
     assert( sigaction( sig, &sa, NULL ) != -1 );
 }
 
+
+/*
+ * 进程池构造函数
+ * 作用:创建需要的子进程;初始化进程池的监听描述符
+ */ 
 template< typename C, typename H, typename M >
 processpool< C, H, M >::processpool( int listenfd, int process_number ) 
     : m_listenfd( listenfd ), m_process_number( process_number ), m_idx( -1 ), m_stop( false )
@@ -112,23 +150,27 @@ processpool< C, H, M >::processpool( int listenfd, int process_number )
         int ret = socketpair( PF_UNIX, SOCK_STREAM, 0, m_sub_process[i].m_pipefd );
         assert( ret == 0 );
 
-        m_sub_process[i].m_pid = fork();
+        m_sub_process[i].m_pid = fork();                // 注意:子进程中也有一份 m_sub_process[i].m_pid,且被修改
         assert( m_sub_process[i].m_pid >= 0 );
-        if( m_sub_process[i].m_pid > 0 )
+        if( m_sub_process[i].m_pid > 0 )                // 1.父进程(返回子进程id)
         {
             close( m_sub_process[i].m_pipefd[1] );
             m_sub_process[i].m_busy_ratio = 0;
-            continue;
-        }
-        else
+            continue;   // 父进程中,继续创建下一个子进程
+        }   
+        else                                            // 2.子进程(返回0)
         {
             close( m_sub_process[i].m_pipefd[0] );
-            m_idx = i;
-            break;
+            m_idx = i;  // 很关键,在子进程中这个变量被修改,后续的逻辑需要通过它判断是哪个进程!
+            break;      // 子进程中,则直接结束执行
         }
     }
 }
 
+
+/*
+ * 找出进程池中最不繁忙的进程,返回其下标
+ */ 
 template< typename C, typename H, typename M >
 int processpool< C, H, M >::get_most_free_srv()
 {
@@ -145,6 +187,10 @@ int processpool< C, H, M >::get_most_free_srv()
     return idx;
 }
 
+
+/*
+ * TODO:
+ */
 template< typename C, typename H, typename M >
 void processpool< C, H, M >::setup_sig_pipe()
 {
@@ -157,16 +203,21 @@ void processpool< C, H, M >::setup_sig_pipe()
     setnonblocking( sig_pipefd[1] );
     add_read_fd( m_epollfd, sig_pipefd[0] );
 
-    addsig( SIGCHLD, sig_handler );
+    // TODO
+    addsig( SIGCHLD, sig_handler );     // 当子进程终止时,会向父进程发送一个SIGCHLD
     addsig( SIGTERM, sig_handler );
     addsig( SIGINT, sig_handler );
     addsig( SIGPIPE, SIG_IGN );
 }
 
+
+/**
+ * 
+ */ 
 template< typename C, typename H, typename M >
 void processpool< C, H, M >::run( const vector<H>& arg )
 {
-    if( m_idx != -1 )
+    if( m_idx != -1 )           // 如果当前控制流是子进程
     {
         run_child( arg );
         return;
@@ -174,12 +225,20 @@ void processpool< C, H, M >::run( const vector<H>& arg )
     run_parent();
 }
 
+
+
+/**
+ * TODO:
+ */ 
 template< typename C, typename H, typename M >
 void processpool< C, H, M >::notify_parent_busy_ratio( int pipefd, M* manager )
 {
     int msg = manager->get_used_conn_cnt();
     send( pipefd, ( char* )&msg, 1, 0 );    
 }
+
+
+
 
 template< typename C, typename H, typename M >
 void processpool< C, H, M >::run_child( const vector<H>& arg )
@@ -322,6 +381,9 @@ void processpool< C, H, M >::run_child( const vector<H>& arg )
     close( m_epollfd );
 }
 
+
+
+
 template< typename C, typename H, typename M >
 void processpool< C, H, M >::run_parent()
 {
@@ -354,7 +416,7 @@ void processpool< C, H, M >::run_parent()
             int sockfd = events[i].data.fd;
             if( sockfd == m_listenfd )
             {
-                /*
+                /* 这部分是原作者注释的...
                 int i =  sub_process_counter;
                 do
                 {
